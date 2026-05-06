@@ -1,0 +1,184 @@
+#!/bin/bash
+
+# ==========================================
+# Basic Web Vulnerability Scanner
+# Educational / Authorized Testing Only
+# ==========================================
+
+echo "======================================"
+echo " Basic Web Vulnerability Scanner"
+echo "======================================"
+
+read -p "Enter Target URL: " TARGET
+
+# Remove trailing slash
+TARGET=${TARGET%/}
+
+echo ""
+echo "[+] Starting Scan on $TARGET"
+
+# ==========================================
+# IDOR TEST
+# ==========================================
+
+echo ""
+echo "[+] Testing IDOR"
+
+for id in 1 2 3 4 5
+do
+    URL="$TARGET/user/$id"
+
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+
+    if [ "$STATUS" == "200" ]; then
+        echo "[!] Possible IDOR -> $URL"
+    fi
+done
+
+# ==========================================
+# SSRF TEST
+# ==========================================
+
+echo ""
+echo "[+] Testing SSRF"
+
+PAYLOADS=(
+"http://127.0.0.1"
+"http://localhost"
+"http://169.254.169.254"
+)
+
+ENDPOINTS=(
+"/fetch?url="
+"/api?url="
+"/proxy?url="
+)
+
+for ep in "${ENDPOINTS[@]}"
+do
+    for payload in "${PAYLOADS[@]}"
+    do
+        URL="${TARGET}${ep}${payload}"
+
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+
+        if [ "$STATUS" == "200" ]; then
+            echo "[!] Possible SSRF -> $URL"
+        fi
+    done
+done
+
+# ==========================================
+# XSS TEST
+# ==========================================
+
+echo ""
+echo "[+] Testing XSS"
+
+PAYLOAD='<script>alert(1)</script>'
+
+URL="$TARGET/search?q=$PAYLOAD"
+
+RESPONSE=$(curl -s "$URL")
+
+if echo "$RESPONSE" | grep -q "$PAYLOAD"
+then
+    echo "[!] Possible Reflected XSS Found"
+else
+    echo "[-] No XSS Detected"
+fi
+
+# ==========================================
+# SQL INJECTION TEST
+# ==========================================
+
+echo ""
+echo "[+] Testing SQL Injection"
+
+SQL_PAYLOAD="' OR '1'='1"
+
+URL="$TARGET/login?username=admin&password=$SQL_PAYLOAD"
+
+RESPONSE=$(curl -s "$URL")
+
+ERRORS=(
+"sql syntax"
+"mysql"
+"syntax error"
+"sqlite"
+"unclosed quotation"
+)
+
+FOUND=0
+
+for err in "${ERRORS[@]}"
+do
+    if echo "$RESPONSE" | grep -iq "$err"
+    then
+        echo "[!] Possible SQL Injection Found"
+        FOUND=1
+        break
+    fi
+done
+
+if [ $FOUND -eq 0 ]
+then
+    echo "[-] No SQLi Detected"
+fi
+
+# ==========================================
+# SECURITY HEADERS CHECK
+# ==========================================
+
+echo ""
+echo "[+] Checking Security Headers"
+
+HEADERS=$(curl -s -I "$TARGET")
+
+SEC_HEADERS=(
+"Content-Security-Policy"
+"X-Frame-Options"
+"Strict-Transport-Security"
+"X-Content-Type-Options"
+)
+
+for header in "${SEC_HEADERS[@]}"
+do
+    if echo "$HEADERS" | grep -iq "$header"
+    then
+        echo "[+] $header Present"
+    else
+        echo "[-] $header Missing"
+    fi
+done
+
+# ==========================================
+# DIRECTORY FUZZING
+# ==========================================
+
+echo ""
+echo "[+] Basic Directory Scan"
+
+DIRS=(
+"admin"
+"login"
+"dashboard"
+"backup"
+"uploads"
+"api"
+)
+
+for dir in "${DIRS[@]}"
+do
+    URL="$TARGET/$dir"
+
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+
+    if [ "$STATUS" == "200" ]
+    then
+        echo "[+] Found -> $URL"
+    fi
+done
+
+echo ""
+echo "[+] Scan Completed"
